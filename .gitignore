@@ -32,3 +32,228 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Splash Force Multiplayer</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(to bottom, #a0eaff, #ffffff);
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      background-color: #e0f7ff;
+    }
+
+    #joystick {
+      position: absolute;
+      bottom: 40px;
+      left: 40px;
+      width: 100px;
+      height: 100px;
+      background: rgba(0, 0, 0, 0.1);
+      border-radius: 50%;
+      touch-action: none;
+    }
+
+    #stick {
+      position: absolute;
+      width: 40px;
+      height: 40px;
+      background: #00aaff;
+      border-radius: 50%;
+      top: 30px;
+      left: 30px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+  <div id="joystick">
+    <div id="stick"></div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    let player = {
+      x: 100, y: 500, name: '', score: 0, balloons: 12, health: 100, speed: 2
+    };
+    let obstacles = [];
+    let splashes = [];
+    let otherPlayers = {};
+
+    let joystick = document.getElementById('joystick');
+    let stick = document.getElementById('stick');
+    let joystickCenter = { x: 50, y: 50 };
+    let touchVector = { x: 0, y: 0 };
+
+    window.onload = () => {
+      canvas.style.display = 'block';
+      socket.emit('join', { username: 'Guest' });
+    };
+
+    socket.on('startGame', (data) => {
+      player.name = data.name;
+      setInterval(gameLoop, 1000 / 60);
+      setInterval(() => {
+        if (player.health < 100) player.health += 1;
+      }, 1000);
+    });
+
+    socket.on('updateObstacles', (newObstacles) => {
+      obstacles = newObstacles;
+    });
+
+    socket.on('splashHit', () => {
+      player.score++;
+      if (player.score % 12 === 0) player.balloons = 12;
+    });
+
+    socket.on('updatePlayers', (players) => {
+      otherPlayers = players;
+      delete otherPlayers[socket.id];
+    });
+
+    canvas.addEventListener('click', (e) => {
+      if (player.balloons <= 0) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const targetX = e.clientX - rect.left;
+      const targetY = e.clientY - rect.top;
+
+      const dx = targetX - (player.x + 25);
+      const dy = targetY - player.y;
+      const magnitude = Math.sqrt(dx * dx + dy * dy);
+      const speed = 5;
+
+      const splash = {
+        x: player.x + 25,
+        y: player.y,
+        vx: (dx / magnitude) * speed,
+        vy: (dy / magnitude) * speed
+      };
+
+      splashes.push(splash);
+      player.balloons--;
+      socket.emit('splash', splash);
+    });
+
+    joystick.addEventListener('touchstart', handleTouch, false);
+    joystick.addEventListener('touchmove', handleTouch, false);
+    joystick.addEventListener('touchend', () => {
+      touchVector = { x: 0, y: 0 };
+      stick.style.left = '30px';
+      stick.style.top = '30px';
+    });
+
+    function handleTouch(e) {
+      e.preventDefault();
+      const touch = e.touches[0];
+      const rect = joystick.getBoundingClientRect();
+      const x = touch.clientX - rect.left;
+      const y = touch.clientY - rect.top;
+
+      const dx = x - joystickCenter.x;
+      const dy = y - joystickCenter.y;
+      const magnitude = Math.min(Math.sqrt(dx * dx + dy * dy), 40);
+
+      const angle = Math.atan2(dy, dx);
+      touchVector.x = Math.cos(angle) * (magnitude / 40);
+      touchVector.y = Math.sin(angle) * (magnitude / 40);
+
+      stick.style.left = `${x - 20}px`;
+      stick.style.top = `${y - 20}px`;
+    }
+
+    function movePlayer() {
+      player.x += touchVector.x * player.speed;
+      player.y += touchVector.y * player.speed;
+
+      player.x = Math.max(0, Math.min(canvas.width - 50, player.x));
+      player.y = Math.max(0, Math.min(canvas.height - 50, player.y));
+    }
+
+    function gameLoop() {
+      movePlayer();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawPlayer();
+      drawOtherPlayers();
+      drawObstacles();
+      drawSplashes();
+      drawUI();
+    }
+
+    function drawPlayer() {
+      ctx.fillStyle = 'blue';
+      ctx.fillRect(player.x, player.y, 50, 50);
+      drawHealthBar(player.x, player.y - 10, player.health);
+    }
+
+    function drawOtherPlayers() {
+      ctx.fillStyle = 'green';
+      for (let id in otherPlayers) {
+        const p = otherPlayers[id];
+        ctx.fillRect(p.x, p.y, 50, 50);
+        drawHealthBar(p.x, p.y - 10, p.health || 100);
+      }
+    }
+
+    function drawHealthBar(x, y, health) {
+      ctx.fillStyle = 'red';
+      ctx.fillRect(x, y, 50, 5);
+      ctx.fillStyle = 'lime';
+      ctx.fillRect(x, y, health * 0.5, 5);
+    }
+
+    function drawObstacles() {
+      ctx.fillStyle = 'gray';
+      obstacles.forEach(o => ctx.fillRect(o.x, o.y, 50, 50));
+    }
+
+    function drawSplashes() {
+      ctx.fillStyle = 'aqua';
+      splashes.forEach((s, i) => {
+        s.x += s.vx;
+        s.y += s.vy;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, 10, 0, Math.PI * 2);
+        ctx.fill();
+
+        obstacles.forEach(o => {
+          if (s.x > o.x && s.x < o.x + 50 && s.y > o.y && s.y < o.y + 50) {
+            socket.emit('hit', o.id);
+            splashes.splice(i, 1);
+          }
+        });
+
+        for (let id in otherPlayers) {
+          const p = otherPlayers[id];
+          if (s.x > p.x && s.x < p.x + 50 && s.y > p.y && s.y < p.y + 50) {
+            socket.emit('playerHit', { targetId: id });
+            splashes.splice(i, 1);
+          }
+        }
+      });
+    }
+
+    function drawUI() {
+      ctx.fillStyle = 'black';
+      ctx.font = '20px Arial';
+      ctx.fillText(`Score: ${player.score}`, 10, 30);
+      ctx.fillText(`Balloons: ${player.balloons}`, 10, 60);
+      ctx.fillText(`Health: ${player.health}`, 10, 90);
+    }
+  </script>
+</body>
+</html>
